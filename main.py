@@ -8,19 +8,17 @@ from datetime import datetime
 import pytz
 
 TOKEN = os.getenv("TOKEN")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")        # From gnews.io
-NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")  # From newsdata.io
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # From openweathermap.org
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(bot)
 
 config_file = "channel.json"
 news_log = "news.json"
 
-# Load config
 def load_config():
     if os.path.exists(config_file):
         with open(config_file, "r") as f:
@@ -37,7 +35,7 @@ config = load_config()
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     try:
-        await tree.sync()
+        await bot.tree.sync()
         print("✅ Slash commands synced")
     except Exception as e:
         print(f"❌ Slash sync failed: {e}")
@@ -55,23 +53,19 @@ async def prefix(ctx, *, symbol=None):
 async def news(ctx):
     await fetch_gnews(ctx.channel, lang="en", count=4)
 
-@tree.command(name="setup", description="Setup daily news posting")
-@app_commands.describe(time="Hour of day (0-23)")
+@bot.tree.command(name="setup", description="Setup daily news posting")
+@app_commands.describe(time="Hour of day (0–23)")
 async def setup(interaction: discord.Interaction, time: int):
     if not (0 <= time <= 23):
         await interaction.response.send_message("❌ Time must be between 0–23.", ephemeral=True)
         return
-
     config["channel_id"] = interaction.channel.id
     config["post_hour"] = time
     save_config(config)
     await interaction.response.send_message(f"✅ Daily news will post here at {time:02d}:00")
     await fetch_gnews(interaction.channel, "en", count=7)
 
-# ==========================
-# Slash Command: /weather
-# ==========================
-@tree.command(name="weather", description="Check current weather")
+@bot.tree.command(name="weather", description="Check current weather")
 @app_commands.describe(city="City name")
 async def weather(interaction: discord.Interaction, city: str):
     await interaction.response.defer(thinking=True)
@@ -101,8 +95,8 @@ async def weather(interaction: discord.Interaction, city: str):
 @weather.autocomplete("city")
 async def weather_autocomplete(interaction: discord.Interaction, current: str):
     cities = [
-        "Delhi", "Mumbai", "Chennai", "Kolkata", "Bangalore", "Hyderabad", "Lucknow",
-        "Pune", "Ahmedabad", "Jaipur", "Kanpur", "Indore", "Patna", "Varanasi"
+        "Delhi", "Mumbai", "Chennai", "Kolkata", "Bangalore", "Hyderabad",
+        "Pune", "Lucknow", "Indore", "Jaipur", "Patna", "Varanasi"
     ]
     current = current or ""
     matches = [c for c in cities if current.lower() in c.lower()]
@@ -110,14 +104,18 @@ async def weather_autocomplete(interaction: discord.Interaction, current: str):
         app_commands.Choice(name=city, value=city) for city in matches[:10]
     ])
 
-# ==========================
-# Slash Command: /news
-# ==========================
-@tree.command(name="news", description="Get news from your preferred source")
-@app_commands.describe(language="Language (english/hindi)", source="Source (gnews/newsdata/bhaskar)")
+@bot.tree.command(name="news", description="Get news from your preferred source")
+@app_commands.describe(language="Language", source="Source")
 @app_commands.choices(
-    language=[app_commands.Choice(name="English", value="en"), app_commands.Choice(name="Hindi", value="hi")],
-    source=[app_commands.Choice(name="GNews", value="gnews"), app_commands.Choice(name="NewsData", value="newsdata"), app_commands.Choice(name="Dainik Bhaskar", value="bhaskar")]
+    language=[
+        app_commands.Choice(name="English", value="en"),
+        app_commands.Choice(name="Hindi", value="hi")
+    ],
+    source=[
+        app_commands.Choice(name="GNews", value="gnews"),
+        app_commands.Choice(name="NewsData", value="newsdata"),
+        app_commands.Choice(name="Dainik Bhaskar", value="bhaskar")
+    ]
 )
 async def news_command(interaction: discord.Interaction, language: app_commands.Choice[str], source: app_commands.Choice[str]):
     await interaction.response.defer(thinking=True)
@@ -136,9 +134,7 @@ async def news_command(interaction: discord.Interaction, language: app_commands.
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}")
 
-# ==========================
 # News Fetchers
-# ==========================
 async def fetch_gnews(channel, lang="en", count=5):
     url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=10&apikey={NEWS_API_KEY}"
     res = requests.get(url).json()
@@ -157,7 +153,6 @@ async def fetch_gnews(channel, lang="en", count=5):
     for art in res["articles"]:
         if art["title"] in old_titles:
             continue
-
         embed = discord.Embed(
             title=art["title"],
             url=art["url"],
@@ -167,7 +162,6 @@ async def fetch_gnews(channel, lang="en", count=5):
         if art.get("image"):
             embed.set_image(url=art["image"])
         await channel.send(embed=embed)
-
         new_titles.append(art["title"])
         sent += 1
         if sent >= count:
@@ -175,7 +169,6 @@ async def fetch_gnews(channel, lang="en", count=5):
 
     if sent == 0:
         await channel.send("ℹ️ No new articles.")
-
     with open(news_log, "w") as f:
         json.dump(new_titles, f)
 
@@ -222,9 +215,6 @@ async def fetch_dainik_bhaskar(channel):
     except Exception as e:
         await channel.send(f"❌ Dainik Bhaskar fetch failed: {e}")
 
-# ==========================
-# Daily News Auto Task
-# ==========================
 @tasks.loop(minutes=1)
 async def daily_news():
     now = datetime.now(pytz.timezone("Asia/Kolkata"))
