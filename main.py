@@ -75,8 +75,7 @@ async def setup(interaction: discord.Interaction, time: str):
     config["post_minute"] = minute
     save_config(config)
 
-    await interaction.response.defer(thinking=True)
-    await interaction.followup.send(f"✅ Setup complete. News will post daily at {time}")
+    await interaction.response.send_message(f"✅ Setup complete. News will post daily at {time}")
 
     fake_channel = FollowupChannel(interaction.followup)
     await fetch_and_send_news(fake_channel, count=7)
@@ -109,37 +108,44 @@ async def fetch_and_send_news(channel, count=3):
     with open("news.json", "r") as f:
         old_titles = json.load(f)
 
-    new_titles = old_titles.copy()
+    new_titles = []
     sent = 0
 
     sources = [fetch_from_gnews, fetch_from_newsdata, fetch_from_dainik_bhaskar]
 
     for source in sources:
-        articles = source()
-        for article in articles:
-            if article["title"] not in old_titles:
-                embed = discord.Embed(
-                    title=article["title"],
-                    url=article["url"],
-                    description=article.get("desc", ""),
-                    color=discord.Color.blue()
-                )
-                if article.get("image"):
-                    embed.set_image(url=article["image"])
-                embed.set_footer(text=article.get("source", "News Bot"))
-                await channel.send(embed=embed)
-                new_titles.append(article["title"])
-                sent += 1
-            if sent >= count:
-                break
         if sent >= count:
             break
+        articles = source()
+        for article in articles:
+            if sent >= count:
+                break
+
+            title = article["title"].strip()
+            if title in old_titles:
+                continue
+
+            embed = discord.Embed(
+                title=article["title"],
+                url=article["url"],
+                description=article.get("desc", ""),
+                color=discord.Color.blue()
+            )
+            if article.get("image"):
+                embed.set_image(url=article["image"])
+            embed.set_footer(text=article.get("source", "News Bot"))
+            await channel.send(embed=embed)
+
+            new_titles.append(title)
+            sent += 1
 
     if sent == 0:
         await channel.send("ℹ️ No new articles today.")
 
+    # Save up to last 100 unique titles
+    combined_titles = list(dict.fromkeys(old_titles + new_titles))
     with open("news.json", "w") as f:
-        json.dump(new_titles[-50:], f)
+        json.dump(combined_titles[-100:], f)
 
 def fetch_from_gnews():
     key = os.getenv("NEWS_API_KEY")
