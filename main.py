@@ -9,7 +9,7 @@ import pytz
 import feedparser
 from keep_alive import keep_alive
 
-# Config
+# Load config
 CONFIG_FILE = "config.json"
 default_config = {
     "channel_id": None,
@@ -96,7 +96,7 @@ async def weather(interaction: discord.Interaction, city: str):
         return
 
     try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&units=metric"
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city.strip().lower()}&appid={key}&units=metric"
         res = requests.get(url).json()
 
         if res.get("cod") != 200:
@@ -124,6 +124,17 @@ async def weather(interaction: discord.Interaction, city: str):
 
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}")
+
+@weather.autocomplete("city")
+async def weather_autocomplete(interaction: discord.Interaction, current: str):
+    cities = [
+        "Delhi", "New Delhi", "Mumbai", "Kolkata", "Chennai", "Bangalore",
+        "Hyderabad", "Pune", "Lucknow", "Jaipur", "Indore", "Ahmedabad",
+        "Surat", "Patna", "Bhopal", "Nagpur", "Kanpur", "Varanasi"
+    ]
+    suggestions = [app_commands.Choice(name=city, value=city)
+                   for city in cities if current.lower() in city.lower()]
+    await interaction.response.send_autocomplete(suggestions[:10])
 
 @bot.command()
 async def news(ctx):
