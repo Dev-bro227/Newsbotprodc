@@ -75,13 +75,17 @@ async def setup(interaction: discord.Interaction, time: str):
     config["post_minute"] = minute
     save_config(config)
 
-    await interaction.response.send_message(f"✅ Setup complete. News will post daily at {time}")
-    await fetch_and_send_news(interaction.channel, count=7)
+    await interaction.response.defer(thinking=True)
+    await interaction.followup.send(f"✅ Setup complete. News will post daily at {time}")
+
+    fake_channel = FollowupChannel(interaction.followup)
+    await fetch_and_send_news(fake_channel, count=7)
 
 @tree.command(name="news", description="Get 4 fresh news articles now")
 async def slash_news(interaction: discord.Interaction):
-    await interaction.response.defer()
-    await fetch_and_send_news(interaction.channel, count=4)
+    await interaction.response.defer(thinking=True)
+    fake_channel = FollowupChannel(interaction.followup)
+    await fetch_and_send_news(fake_channel, count=4)
 
 @bot.command()
 async def news(ctx):
@@ -182,6 +186,12 @@ def fetch_from_dainik_bhaskar():
         } for entry in feed.entries]
     except:
         return []
+
+class FollowupChannel:
+    def __init__(self, followup):
+        self.followup = followup
+    async def send(self, *args, **kwargs):
+        await self.followup.send(*args, **kwargs)
 
 if __name__ == "__main__":
     keep_alive()
