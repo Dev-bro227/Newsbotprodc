@@ -86,6 +86,45 @@ async def slash_news(interaction: discord.Interaction):
     fake_channel = FollowupChannel(interaction.followup)
     await fetch_and_send_news(fake_channel, count=4)
 
+@tree.command(name="weather", description="Get weather by city")
+@app_commands.describe(city="City name like delhi or mumbai")
+async def weather(interaction: discord.Interaction, city: str):
+    await interaction.response.defer(thinking=True)
+    key = os.getenv("WEATHER_API_KEY")
+    if not key:
+        await interaction.followup.send("❌ Weather API key not found.")
+        return
+
+    try:
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={key}&units=metric"
+        res = requests.get(url).json()
+
+        if res.get("cod") != 200:
+            await interaction.followup.send(f"❌ City not found: {city}")
+            return
+
+        name = res["name"]
+        country = res["sys"]["country"]
+        temp = res["main"]["temp"]
+        humidity = res["main"]["humidity"]
+        wind = res["wind"]["speed"]
+        desc = res["weather"][0]["description"].title()
+
+        embed = discord.Embed(
+            title=f"🌤 Weather in {name}, {country}",
+            description=f"⛅ {desc}",
+            color=discord.Color.teal()
+        )
+        embed.add_field(name="🌡 Temperature", value=f"{temp}°C", inline=True)
+        embed.add_field(name="💧 Humidity", value=f"{humidity}%", inline=True)
+        embed.add_field(name="🌬 Wind", value=f"{wind} km/h", inline=True)
+        embed.set_footer(text="Powered by OpenWeatherMap")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}")
+
 @bot.command()
 async def news(ctx):
     await fetch_and_send_news(ctx.channel, count=4)
