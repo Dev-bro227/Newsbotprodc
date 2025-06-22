@@ -46,10 +46,6 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Slash sync failed: {e}")
 
-def is_active_hours():
-    now = datetime.now(pytz.timezone(config["timezone"]))
-    return 7 <= now.hour < 22
-
 @tree.command(name="prefix", description="Change the bot's command prefix")
 @app_commands.describe(new_prefix="New prefix like ! or ?")
 async def prefix(interaction: discord.Interaction, new_prefix: str):
@@ -84,25 +80,17 @@ async def setup(interaction: discord.Interaction, time: str):
 
 @tree.command(name="news", description="Get 4 fresh news articles now")
 async def slash_news(interaction: discord.Interaction):
-    if not is_active_hours():
-        await interaction.response.send_message("❌ Bot only works from 7 AM to 10 PM IST.", ephemeral=True)
-        return
-    await interaction.response.send_message("📰 Fetching 4 latest news articles...")
+    await interaction.response.defer()
     await fetch_and_send_news(interaction.channel, count=4)
 
 @bot.command()
 async def news(ctx):
-    if not is_active_hours():
-        await ctx.send("❌ Bot only works from 7 AM to 10 PM IST.")
-        return
     await fetch_and_send_news(ctx.channel, count=4)
 
 @tasks.loop(minutes=1)
 async def daily_news():
     now = datetime.now(pytz.timezone(config["timezone"]))
     if now.hour == config["post_hour"] and now.minute == config["post_minute"]:
-        if not is_active_hours():
-            return
         channel_id = config.get("channel_id")
         if channel_id:
             channel = bot.get_channel(channel_id)
