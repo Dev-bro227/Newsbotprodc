@@ -1,123 +1,96 @@
 import os
 import discord
+import json
+import requests
 from discord.ext import commands, tasks
 from discord import app_commands
-import requests
-import json
 from datetime import datetime
 import pytz
-import feedparser
-from keep_alive import keep_alive
 
-# Load config
-CONFIG_FILE = "config.json"
-default_config = {
-    "channel_id": None,
-    "prefix": "!",
-    "post_hour": 9,
-    "post_minute": 0,
-    "timezone": "Asia/Kolkata"
-}
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
-    return default_config.copy()
-
-def save_config(config):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=4)
-
-config = load_config()
+TOKEN = os.getenv("TOKEN")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")        # From gnews.io
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")  # From newsdata.io
+WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")  # From openweathermap.org
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=lambda b, m: config["prefix"], intents=intents)
-tree = bot.tree
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = app_commands.CommandTree(bot)
+
+config_file = "channel.json"
+news_log = "news.json"
+
+# Load config
+def load_config():
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
+            return json.load(f)
+    return {"channel_id": None, "post_hour": 9}
+
+def save_config(data):
+    with open(config_file, "w") as f:
+        json.dump(data, f)
+
+config = load_config()
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot is online as {bot.user}")
-    daily_news.start()
+    print(f"✅ Logged in as {bot.user}")
     try:
         await tree.sync()
-        print("✅ Slash commands synced.")
+        print("✅ Slash commands synced")
     except Exception as e:
         print(f"❌ Slash sync failed: {e}")
+    daily_news.start()
 
-@tree.command(name="prefix", description="Change the bot's command prefix")
-@app_commands.describe(new_prefix="New prefix like ! or ?")
-async def prefix(interaction: discord.Interaction, new_prefix: str):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Admin only!", ephemeral=True)
-        return
-    config["prefix"] = new_prefix
-    save_config(config)
-    await interaction.response.send_message(f"✅ Prefix changed to `{new_prefix}`")
+@bot.command()
+async def prefix(ctx, *, symbol=None):
+    if symbol:
+        bot.command_prefix = symbol
+        await ctx.send(f"✅ Prefix changed to `{symbol}`")
+    else:
+        await ctx.send(f"ℹ️ Current prefix is `{bot.command_prefix}`")
 
-@tree.command(name="setup", description="Set news post time and this channel for updates")
-@app_commands.describe(time="24h format like 09:00")
-async def setup(interaction: discord.Interaction, time: str):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ Admin only!", ephemeral=True)
-        return
-    try:
-        hour, minute = map(int, time.split(":"))
-        if not (0 <= hour < 24 and 0 <= minute < 60):
-            raise ValueError()
-    except:
-        await interaction.response.send_message("❌ Use format HH:MM (like 09:30)", ephemeral=True)
+@bot.command()
+async def news(ctx):
+    await fetch_gnews(ctx.channel, lang="en", count=4)
+
+@tree.command(name="setup", description="Setup daily news posting")
+@app_commands.describe(time="Hour of day (0-23)")
+async def setup(interaction: discord.Interaction, time: int):
+    if not (0 <= time <= 23):
+        await interaction.response.send_message("❌ Time must be between 0–23.", ephemeral=True)
         return
 
     config["channel_id"] = interaction.channel.id
-    config["post_hour"] = hour
-    config["post_minute"] = minute
+    config["post_hour"] = time
     save_config(config)
+    await interaction.response.send_message(f"✅ Daily news will post here at {time:02d}:00")
+    await fetch_gnews(interaction.channel, "en", count=7)
 
-    await interaction.response.send_message(f"✅ Setup complete. News will post daily at {time}")
-
-    fake_channel = FollowupChannel(interaction.followup)
-    await fetch_and_send_news(fake_channel, count=7)
-
-@tree.command(name="news", description="Get 4 fresh news articles now")
-async def slash_news(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-    fake_channel = FollowupChannel(interaction.followup)
-    await fetch_and_send_news(fake_channel, count=4)
-
-@tree.command(name="weather", description="Get weather by city")
-@app_commands.describe(city="City name like delhi or mumbai")
+# ==========================
+# Slash Command: /weather
+# ==========================
+@tree.command(name="weather", description="Check current weather")
+@app_commands.describe(city="City name")
 async def weather(interaction: discord.Interaction, city: str):
     await interaction.response.defer(thinking=True)
-    key = os.getenv("WEATHER_API_KEY")
-    if not key:
-        await interaction.followup.send("❌ Weather API key not found.")
-        return
-
     try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city.strip().lower()}&appid={key}&units=metric"
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
         res = requests.get(url).json()
 
         if res.get("cod") != 200:
             await interaction.followup.send(f"❌ City not found: {city}")
             return
 
-        name = res["name"]
-        country = res["sys"]["country"]
-        temp = res["main"]["temp"]
-        humidity = res["main"]["humidity"]
-        wind = res["wind"]["speed"]
-        desc = res["weather"][0]["description"].title()
-
         embed = discord.Embed(
-            title=f"🌤 Weather in {name}, {country}",
-            description=f"⛅ {desc}",
+            title=f"🌤 Weather in {res['name']}, {res['sys']['country']}",
+            description=f"⛅ {res['weather'][0]['description'].title()}",
             color=discord.Color.teal()
         )
-        embed.add_field(name="🌡 Temperature", value=f"{temp}°C", inline=True)
-        embed.add_field(name="💧 Humidity", value=f"{humidity}%", inline=True)
-        embed.add_field(name="🌬 Wind", value=f"{wind} km/h", inline=True)
+        embed.add_field(name="🌡 Temperature", value=f"{res['main']['temp']}°C", inline=True)
+        embed.add_field(name="💧 Humidity", value=f"{res['main']['humidity']}%", inline=True)
+        embed.add_field(name="🌬 Wind", value=f"{res['wind']['speed']} km/h", inline=True)
         embed.set_footer(text="Powered by OpenWeatherMap")
 
         await interaction.followup.send(embed=embed)
@@ -128,127 +101,138 @@ async def weather(interaction: discord.Interaction, city: str):
 @weather.autocomplete("city")
 async def weather_autocomplete(interaction: discord.Interaction, current: str):
     cities = [
-        "Delhi", "New Delhi", "Mumbai", "Kolkata", "Chennai", "Bangalore",
-        "Hyderabad", "Pune", "Lucknow", "Jaipur", "Indore", "Ahmedabad",
-        "Surat", "Patna", "Bhopal", "Nagpur", "Kanpur", "Varanasi"
+        "Delhi", "Mumbai", "Chennai", "Kolkata", "Bangalore", "Hyderabad", "Lucknow",
+        "Pune", "Ahmedabad", "Jaipur", "Kanpur", "Indore", "Patna", "Varanasi"
     ]
-    suggestions = [app_commands.Choice(name=city, value=city)
-                   for city in cities if current.lower() in city.lower()]
-    await interaction.response.send_autocomplete(suggestions[:10])
+    current = current or ""
+    matches = [c for c in cities if current.lower() in c.lower()]
+    await interaction.response.send_autocomplete([
+        app_commands.Choice(name=city, value=city) for city in matches[:10]
+    ])
 
-@bot.command()
-async def news(ctx):
-    await fetch_and_send_news(ctx.channel, count=4)
+# ==========================
+# Slash Command: /news
+# ==========================
+@tree.command(name="news", description="Get news from your preferred source")
+@app_commands.describe(language="Language (english/hindi)", source="Source (gnews/newsdata/bhaskar)")
+@app_commands.choices(
+    language=[app_commands.Choice(name="English", value="en"), app_commands.Choice(name="Hindi", value="hi")],
+    source=[app_commands.Choice(name="GNews", value="gnews"), app_commands.Choice(name="NewsData", value="newsdata"), app_commands.Choice(name="Dainik Bhaskar", value="bhaskar")]
+)
+async def news_command(interaction: discord.Interaction, language: app_commands.Choice[str], source: app_commands.Choice[str]):
+    await interaction.response.defer(thinking=True)
+    lang = language.value
+    src = source.value
 
-@tasks.loop(minutes=1)
-async def daily_news():
-    now = datetime.now(pytz.timezone(config["timezone"]))
-    if now.hour == config["post_hour"] and now.minute == config["post_minute"]:
-        channel_id = config.get("channel_id")
-        if channel_id:
-            channel = bot.get_channel(channel_id)
-            if channel:
-                await fetch_and_send_news(channel, count=7)
+    try:
+        if src == "gnews":
+            await fetch_gnews(interaction.channel, lang)
+        elif src == "newsdata":
+            await fetch_newsdata(interaction.channel, lang)
+        elif src == "bhaskar":
+            await fetch_dainik_bhaskar(interaction.channel)
+        else:
+            await interaction.followup.send("❌ Unknown source selected.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}")
 
-async def fetch_and_send_news(channel, count=3):
-    if not os.path.exists("news.json"):
-        with open("news.json", "w") as f:
-            json.dump([], f)
+# ==========================
+# News Fetchers
+# ==========================
+async def fetch_gnews(channel, lang="en", count=5):
+    url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=10&apikey={NEWS_API_KEY}"
+    res = requests.get(url).json()
+    if "articles" not in res:
+        await channel.send("❌ Could not fetch GNews articles.")
+        return
 
-    with open("news.json", "r") as f:
-        old_titles = json.load(f)
+    old_titles = []
+    if os.path.exists(news_log):
+        with open(news_log, "r") as f:
+            old_titles = json.load(f)
 
     new_titles = []
     sent = 0
 
-    sources = [fetch_from_gnews, fetch_from_newsdata, fetch_from_dainik_bhaskar]
+    for art in res["articles"]:
+        if art["title"] in old_titles:
+            continue
 
-    for source in sources:
+        embed = discord.Embed(
+            title=art["title"],
+            url=art["url"],
+            description=f"📰 Source: {art['source']['name']}",
+            color=discord.Color.blue()
+        )
+        if art.get("image"):
+            embed.set_image(url=art["image"])
+        await channel.send(embed=embed)
+
+        new_titles.append(art["title"])
+        sent += 1
         if sent >= count:
             break
-        articles = source()
-        for article in articles:
-            if sent >= count:
-                break
-
-            title = article["title"].strip()
-            if title in old_titles:
-                continue
-
-            embed = discord.Embed(
-                title=article["title"],
-                url=article["url"],
-                description=article.get("desc", ""),
-                color=discord.Color.blue()
-            )
-            if article.get("image"):
-                embed.set_image(url=article["image"])
-            embed.set_footer(text=article.get("source", "News Bot"))
-            await channel.send(embed=embed)
-
-            new_titles.append(title)
-            sent += 1
 
     if sent == 0:
-        await channel.send("ℹ️ No new articles today.")
+        await channel.send("ℹ️ No new articles.")
 
-    # Save up to last 100 unique titles
-    combined_titles = list(dict.fromkeys(old_titles + new_titles))
-    with open("news.json", "w") as f:
-        json.dump(combined_titles[-100:], f)
+    with open(news_log, "w") as f:
+        json.dump(new_titles, f)
 
-def fetch_from_gnews():
-    key = os.getenv("NEWS_API_KEY")
-    if not key:
-        return []
+async def fetch_newsdata(channel, lang="en", count=5):
+    url = f"https://newsdata.io/api/1/news?apikey={NEWSDATA_API_KEY}&country=in&language={lang}&category=top"
+    res = requests.get(url).json()
+    if "results" not in res:
+        await channel.send("❌ Could not fetch NewsData articles.")
+        return
+
+    for art in res["results"][:count]:
+        embed = discord.Embed(
+            title=art["title"],
+            url=art["link"],
+            description=f"📰 {art.get('source_id', 'NewsData')}",
+            color=discord.Color.orange()
+        )
+        await channel.send(embed=embed)
+
+async def fetch_dainik_bhaskar(channel):
+    url = "https://www.bhaskar.com/"
     try:
-        url = f"https://gnews.io/api/v4/top-headlines?lang=en&country=in&max=10&apikey={key}"
-        data = requests.get(url).json()
-        return [{
-            "title": a["title"],
-            "url": a["url"],
-            "desc": f"📰 Source: {a['source']['name']}",
-            "image": a.get("image"),
-            "source": "GNews.io"
-        } for a in data.get("articles", [])]
-    except:
-        return []
+        html = requests.get(url).text
+        headlines = []
+        for line in html.splitlines():
+            if '<h3 class="newstrend-title">' in line:
+                start = line.find('>') + 1
+                end = line.rfind('<')
+                title = line[start:end].strip()
+                if title:
+                    headlines.append(title)
+            if len(headlines) >= 5:
+                break
 
-def fetch_from_newsdata():
-    key = os.getenv("NEWSDATA_API_KEY")
-    if not key:
-        return []
-    try:
-        url = f"https://newsdata.io/api/1/news?apikey={key}&country=in&language=hi,en&category=top"
-        data = requests.get(url).json()
-        return [{
-            "title": a["title"],
-            "url": a["link"],
-            "desc": f"📰 Source: {a.get('source_id', 'NewsData.io')}",
-            "image": a.get("image_url"),
-            "source": "NewsData.io"
-        } for a in data.get("results", [])]
-    except:
-        return []
+        for headline in headlines:
+            embed = discord.Embed(
+                title=headline,
+                url=url,
+                description="📰 Dainik Bhaskar",
+                color=discord.Color.red()
+            )
+            await channel.send(embed=embed)
 
-def fetch_from_dainik_bhaskar():
-    try:
-        feed = feedparser.parse("https://www.bhaskar.com/rss-national.xml")
-        return [{
-            "title": entry.title,
-            "url": entry.link,
-            "desc": "📰 Source: Dainik Bhaskar",
-            "source": "Dainik Bhaskar"
-        } for entry in feed.entries]
-    except:
-        return []
+    except Exception as e:
+        await channel.send(f"❌ Dainik Bhaskar fetch failed: {e}")
 
-class FollowupChannel:
-    def __init__(self, followup):
-        self.followup = followup
-    async def send(self, *args, **kwargs):
-        await self.followup.send(*args, **kwargs)
+# ==========================
+# Daily News Auto Task
+# ==========================
+@tasks.loop(minutes=1)
+async def daily_news():
+    now = datetime.now(pytz.timezone("Asia/Kolkata"))
+    if now.hour == config.get("post_hour", 9) and now.minute == 0:
+        cid = config.get("channel_id")
+        if cid:
+            channel = bot.get_channel(cid)
+            if channel:
+                await fetch_gnews(channel, "en", count=7)
 
-if __name__ == "__main__":
-    keep_alive()
-    bot.run(os.getenv("TOKEN"))
+bot.run(TOKEN)
