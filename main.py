@@ -9,7 +9,7 @@ import pytz
 from flask import Flask
 from threading import Thread
 
-# ========== Keep Alive Flask Server ==========
+# ====== Keep Alive Setup ======
 app = Flask('')
 
 @app.route('/')
@@ -23,7 +23,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# ========== Bot Setup ==========
+# ====== Bot Setup ======
 TOKEN = os.getenv("TOKEN")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
@@ -142,16 +142,19 @@ async def news_command(interaction: discord.Interaction, language: app_commands.
     try:
         if src == "gnews":
             await fetch_gnews(interaction.channel, lang)
+            await interaction.followup.send("✅ GNews articles sent.")
         elif src == "newsdata":
             await fetch_newsdata(interaction.channel, lang)
+            await interaction.followup.send("✅ NewsData articles sent.")
         elif src == "bhaskar":
             await fetch_dainik_bhaskar(interaction.channel)
+            await interaction.followup.send("✅ Dainik Bhaskar headlines sent.")
         else:
-            await interaction.followup.send("❌ Unknown source selected.")
+            await interaction.followup.send("❌ Unknown source.")
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}")
 
-# ========== News Functions ==========
+# ====== News Functions ======
 async def fetch_gnews(channel, lang="en", count=5):
     url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=10&apikey={NEWS_API_KEY}"
     res = requests.get(url).json()
@@ -220,6 +223,10 @@ async def fetch_dainik_bhaskar(channel):
             if len(headlines) >= 5:
                 break
 
+        if not headlines:
+            await channel.send("⚠️ Could not find any Dainik Bhaskar headlines.")
+            return
+
         for headline in headlines:
             embed = discord.Embed(
                 title=headline,
@@ -242,6 +249,6 @@ async def daily_news():
             if channel:
                 await fetch_gnews(channel, "en", count=7)
 
-# ========== Start Bot ==========
+# ====== Start Bot ======
 keep_alive()
 bot.run(TOKEN)
