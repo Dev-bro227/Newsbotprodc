@@ -2,6 +2,7 @@ import os
 import discord
 import json
 import requests
+import feedparser
 from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime
@@ -208,36 +209,25 @@ async def fetch_newsdata(channel, lang="en", count=5):
         )
         await channel.send(embed=embed)
 
-async def fetch_dainik_bhaskar(channel):
-    url = "https://www.bhaskar.com/"
+async def fetch_dainik_bhaskar(channel, count=5):
+    url = "https://www.bhaskar.com/rss-national/"
     try:
-        html = requests.get(url).text
-        headlines = []
-        for line in html.splitlines():
-            if '<h3 class="newstrend-title">' in line:
-                start = line.find('>') + 1
-                end = line.rfind('<')
-                title = line[start:end].strip()
-                if title:
-                    headlines.append(title)
-            if len(headlines) >= 5:
-                break
-
-        if not headlines:
-            await channel.send("⚠️ Could not find any Dainik Bhaskar headlines.")
+        feed = feedparser.parse(url)
+        if not feed.entries:
+            await channel.send("⚠️ Could not find Dainik Bhaskar headlines.")
             return
 
-        for headline in headlines:
+        for entry in feed.entries[:count]:
             embed = discord.Embed(
-                title=headline,
-                url=url,
+                title=entry.title,
+                url=entry.link,
                 description="📰 Dainik Bhaskar",
                 color=discord.Color.red()
             )
             await channel.send(embed=embed)
 
     except Exception as e:
-        await channel.send(f"❌ Dainik Bhaskar fetch failed: {e}")
+        await channel.send(f"❌ Error fetching Dainik Bhaskar: {e}")
 
 @tasks.loop(minutes=1)
 async def daily_news():
