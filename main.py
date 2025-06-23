@@ -6,7 +6,24 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime
 import pytz
+from flask import Flask
+from threading import Thread
 
+# ========== Keep Alive Flask Server ==========
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I'm alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# ========== Bot Setup ==========
 TOKEN = os.getenv("TOKEN")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY")
@@ -104,7 +121,7 @@ async def weather_autocomplete(interaction: discord.Interaction, current: str):
         app_commands.Choice(name=city, value=city) for city in matches[:10]
     ])
 
-@bot.tree.command(name="news", description="Get news from your preferred source")
+@bot.tree.command(name="news", description="Get news from source")
 @app_commands.describe(language="Language", source="Source")
 @app_commands.choices(
     language=[
@@ -134,7 +151,7 @@ async def news_command(interaction: discord.Interaction, language: app_commands.
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}")
 
-# News Fetchers
+# ========== News Functions ==========
 async def fetch_gnews(channel, lang="en", count=5):
     url = f"https://gnews.io/api/v4/top-headlines?lang={lang}&country=in&max=10&apikey={NEWS_API_KEY}"
     res = requests.get(url).json()
@@ -225,4 +242,6 @@ async def daily_news():
             if channel:
                 await fetch_gnews(channel, "en", count=7)
 
+# ========== Start Bot ==========
+keep_alive()
 bot.run(TOKEN)
